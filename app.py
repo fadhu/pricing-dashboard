@@ -27,15 +27,18 @@ st.markdown("""
 
 html, body, [class*="css"] {
     font-family: 'IBM Plex Sans', sans-serif;
+    background-color: #f5f7fa;
+    color: #1a1a2e;
 }
 
 /* Header */
 .main-header {
-    background: linear-gradient(135deg, #0a2540 0%, #1a4a6b 100%);
+    background: linear-gradient(135deg, #1565c0 0%, #1976d2 100%);
     padding: 2rem 2.5rem;
     border-radius: 12px;
     margin-bottom: 1.5rem;
-    border-left: 5px solid #00b4d8;
+    border-left: 5px solid #42a5f5;
+    box-shadow: 0 2px 8px rgba(21,101,192,0.15);
 }
 .main-header h1 {
     color: #ffffff;
@@ -46,7 +49,7 @@ html, body, [class*="css"] {
     letter-spacing: -0.5px;
 }
 .main-header p {
-    color: #90caf9;
+    color: #bbdefb;
     font-size: 0.9rem;
     margin: 0;
     font-family: 'IBM Plex Mono', monospace;
@@ -54,15 +57,16 @@ html, body, [class*="css"] {
 
 /* KPI cards */
 .kpi-card {
-    background: #0a2540;
-    border: 1px solid #1a4a6b;
+    background: #ffffff;
+    border: 1px solid #dde3ea;
     border-radius: 10px;
     padding: 1.2rem 1.5rem;
     text-align: center;
     margin-bottom: 0.5rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.07);
 }
 .kpi-label {
-    color: #90caf9;
+    color: #5c6f88;
     font-size: 0.75rem;
     font-family: 'IBM Plex Mono', monospace;
     text-transform: uppercase;
@@ -70,51 +74,49 @@ html, body, [class*="css"] {
     margin-bottom: 0.4rem;
 }
 .kpi-value {
-    color: #ffffff;
+    color: #1a1a2e;
     font-size: 1.6rem;
     font-weight: 700;
     font-family: 'IBM Plex Sans', sans-serif;
 }
-.kpi-delta-pos { color: #4caf50; font-size: 0.9rem; font-weight: 600; }
-.kpi-delta-neg { color: #ef5350; font-size: 0.9rem; font-weight: 600; }
-.kpi-delta-neu { color: #90caf9; font-size: 0.9rem; font-weight: 600; }
+.kpi-delta-pos { color: #2e7d32; font-size: 0.9rem; font-weight: 600; }
+.kpi-delta-neg { color: #c62828; font-size: 0.9rem; font-weight: 600; }
+.kpi-delta-neu { color: #5c6f88; font-size: 0.9rem; font-weight: 600; }
 
 /* Sidebar */
 section[data-testid="stSidebar"] {
-    background: #0a2540 !important;
+    background: #ffffff !important;
+    border-right: 1px solid #dde3ea;
 }
 section[data-testid="stSidebar"] * {
-    color: #e0f0ff !important;
-}
-section[data-testid="stSidebar"] .stRadio label {
-    color: #e0f0ff !important;
+    color: #1a1a2e !important;
 }
 
 /* Tab styling */
 .stTabs [data-baseweb="tab-list"] {
-    background: #0f2f4a;
+    background: #e8edf3;
     border-radius: 8px;
     padding: 4px;
 }
 .stTabs [data-baseweb="tab"] {
-    color: #90caf9;
+    color: #3d5a80;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.8rem;
 }
 .stTabs [aria-selected="true"] {
-    background: #00b4d8 !important;
-    color: #0a2540 !important;
+    background: #1565c0 !important;
+    color: #ffffff !important;
     border-radius: 6px;
     font-weight: 700;
 }
 
 /* Dividers */
-hr { border-color: #1a4a6b; }
+hr { border-color: #dde3ea; }
 
 /* Download button */
 .stDownloadButton button {
-    background: #00b4d8 !important;
-    color: #0a2540 !important;
+    background: #1565c0 !important;
+    color: #ffffff !important;
     font-weight: 700 !important;
     border: none !important;
     font-family: 'IBM Plex Mono', monospace !important;
@@ -124,8 +126,8 @@ hr { border-color: #1a4a6b; }
 /* Segment badge */
 .seg-badge {
     display: inline-block;
-    background: #1a4a6b;
-    color: #90caf9;
+    background: #e3ecf7;
+    color: #1565c0;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.7rem;
     padding: 2px 8px;
@@ -145,28 +147,28 @@ st.markdown("""
 
 # ── Matplotlib theme ───────────────────────────────────────────────────────────
 plt.rcParams.update({
-    "figure.facecolor":  "#0a2540",
-    "axes.facecolor":    "#0f2f4a",
-    "axes.edgecolor":    "#1a4a6b",
-    "axes.labelcolor":   "#90caf9",
-    "axes.titlecolor":   "#ffffff",
-    "xtick.color":       "#90caf9",
-    "ytick.color":       "#90caf9",
-    "grid.color":        "#1a4a6b",
-    "text.color":        "#ffffff",
-    "legend.facecolor":  "#0a2540",
-    "legend.edgecolor":  "#1a4a6b",
-    "legend.labelcolor": "#e0f0ff",
+    "figure.facecolor":  "#ffffff",
+    "axes.facecolor":    "#f5f7fa",
+    "axes.edgecolor":    "#c8d3de",
+    "axes.labelcolor":   "#2c3e50",
+    "axes.titlecolor":   "#1a1a2e",
+    "xtick.color":       "#2c3e50",
+    "ytick.color":       "#2c3e50",
+    "grid.color":        "#dde3ea",
+    "text.color":        "#1a1a2e",
+    "legend.facecolor":  "#ffffff",
+    "legend.edgecolor":  "#c8d3de",
+    "legend.labelcolor": "#2c3e50",
     "axes.titlesize":    10,
     "axes.labelsize":    9,
     "font.family":       "monospace",
 })
 
-BLUE   = "#00b4d8"
-RED    = "#ef5350"
-GREEN  = "#4caf50"
-AMBER  = "#ffb74d"
-GREY   = "#546e7a"
+BLUE   = "#1565c0"
+RED    = "#c62828"
+GREEN  = "#2e7d32"
+AMBER  = "#e65100"
+GREY   = "#78909c"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
@@ -262,7 +264,7 @@ with c1:
     st.markdown(f"""<div class="kpi-card">
         <div class="kpi-label">Current Weekly Revenue</div>
         <div class="kpi-value">SAR {cur_rev:,.0f}</div>
-        <div class="kpi-delta-neu">baseline</div>
+        <div class="kpi-delta-neu">— baseline</div>
     </div>""", unsafe_allow_html=True)
 with c2:
     st.markdown(f"""<div class="kpi-card">
@@ -324,10 +326,10 @@ with tab1:
     def style_beta(val):
         if isinstance(val, float):
             intensity = min(abs(val) / 2.5, 1.0)
-            r = int(10 + intensity * 60)
-            g = int(47 + intensity * 30)
-            b = int(74 + intensity * 20)
-            return f"background-color: rgb({r},{g},{b})"
+            r = int(227 - intensity * 80)
+            g = int(236 - intensity * 60)
+            b = int(247 - intensity * 30)
+            return f"background-color: rgb({r},{g},{b}); color: #1a1a2e"
         return ""
 
     styled = (
@@ -355,7 +357,7 @@ with tab1:
 
     # ── Price comparison chart ────────────────────────────────────────────────
     fig, axes = plt.subplots(1, 2, figsize=(14, 4))
-    fig.patch.set_facecolor("#0a2540")
+    fig.patch.set_facecolor("#ffffff")
 
     x      = np.arange(len(results))
     w      = 0.35
@@ -422,7 +424,7 @@ with tab2:
     else:
         n_sel = len(selected)
         fig   = plt.figure(figsize=(15, 4.5 * n_sel))
-        fig.patch.set_facecolor("#0a2540")
+        fig.patch.set_facecolor("#ffffff")
         gs    = gridspec.GridSpec(n_sel, 2, figure=fig,
                                   hspace=0.55, wspace=0.35)
 
@@ -518,7 +520,7 @@ with tab3:
 
     # Charts
     fig, axes = plt.subplots(1, 2, figsize=(14, 4.5))
-    fig.patch.set_facecolor("#0a2540")
+    fig.patch.set_facecolor("#ffffff")
 
     scen_colors = [GREEN, BLUE, AMBER, RED]
     base_rev    = scen_df[scen_df["Scenario"] == "⚪ Base case"]["Total Revenue"].values[0]
