@@ -1,7 +1,7 @@
 """
-app.py — McKinsey-aligned Pricing Optimisation Dashboard
+app.py — Pricing Optimisation Dashboard
 ==========================================================
-Reflects the actual model structure from the McKinsey handover:
+Model structure:
   - IRR as the optimisation variable (not flat rate)
   - Flat rate derived per cell from IRR + tenure + fee
   - Log-log demand model with β, γ_festival, γ_eid, γ_national
@@ -69,7 +69,7 @@ section[data-testid="stSidebar"] * { color: #e0f0ff !important; }
 st.markdown("""
 <div class="main-header">
   <h1>💰 Loan Pricing Optimisation Dashboard</h1>
-  <p>McKinsey methodology · Log-log demand · IRR optimisation · Power-law correction · Monthly calibration</p>
+  <p>Log-log demand · IRR optimisation · Power-law correction · Monthly calibration</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -139,7 +139,7 @@ with st.sidebar:
     apply_correction = st.checkbox(
         "Apply power-law correction (α_adj, i)",
         value=True,
-        help="Applies the per-cluster structural bias correction from the McKinsey slide"
+        help="Applies the per-cluster structural bias correction"
     )
     apply_calibration = st.checkbox(
         "Apply monthly calibration factor",
@@ -148,7 +148,7 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.caption("Built on McKinsey methodology · SLSQP solver · scipy")
+    st.caption("Log-log demand model · SLSQP solver · scipy")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -373,7 +373,7 @@ with tab2:
             ax_r.set_title("Revenue curve\n(sales × spread)")
             ax_r.legend(fontsize=7); ax_r.grid(alpha=0.25)
 
-        plt.suptitle("Demand & Revenue Curves — full McKinsey pipeline",
+        plt.suptitle("Demand & Revenue Curves — full pipeline",
                      fontsize=12, fontweight="bold", color="white", y=1.01)
         st.pyplot(fig); plt.close()
 
@@ -383,7 +383,7 @@ with tab2:
 # ─────────────────────────────────────────────────────────────────────────────
 with tab3:
     st.markdown("#### Model components per cluster")
-    st.caption("Shows every parameter from the McKinsey slide: "
+    st.caption("Shows every model parameter: "
                "β, γ coefficients, power-law correction (α_adj, i), baseline")
 
     col_a, col_b = st.columns(2)

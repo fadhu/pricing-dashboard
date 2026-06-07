@@ -1,7 +1,7 @@
 """
-engine.py — McKinsey-aligned pricing engine
+engine.py — Pricing engine
 =============================================
-Implements the full pipeline observed in the McKinsey handover:
+Implements the full pricing pipeline:
 
   1. Clusters with pooled log-log elasticity (β)
   2. Calendar features: festival, Eid, National Day (separate γ coefficients)
@@ -25,7 +25,7 @@ warnings.filterwarnings("ignore")
 COF = 0.04   # cost of funds
 
 
-# ── Cluster definitions (from McKinsey slide) ─────────────────────────────────
+# ── Cluster definitions ──────────────────────────────────────────────────────────
 # beta:           pooled log-log elasticity (Log FR column on slide)
 # gamma_festival: coefficient for Festival/Hajj/Eid al-Adha
 # gamma_eid:      coefficient for Eid holiday days (negative — offices shut)
@@ -107,7 +107,7 @@ def forecast_demand(cluster_row, irr_new, is_festival=0, is_eid=0,
                     is_national=0, apply_correction=True,
                     cal_factor=1.0):
     """
-    Full McKinsey demand forecast pipeline for one cluster.
+    Full demand forecast pipeline for one cluster.
 
     Step 1: Log-log model
       ln(Sales) = α + β·ln(IRR) + γ_f·Festival + γ_e·Eid + γ_n·National
@@ -189,7 +189,7 @@ def run_optimisation(clusters_df, objective="max_sales_given_irr",
                      is_national=0, apply_correction=True,
                      cal_df=None):
     """
-    McKinsey-aligned constrained optimisation.
+    Constrained optimisation.
 
     Objective 1 — max_sales_given_irr:
       Maximise total sales volume

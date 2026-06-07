@@ -1,12 +1,12 @@
-# Pricing Optimisation Dashboard v2 — McKinsey Aligned
+# Pricing Optimisation Dashboard v2
 
-Rebuilt to reflect the actual McKinsey methodology from the handover.
+Rebuilt with an industry-standard pricing methodology.
 
 ## What changed from v1
 
-| Feature | v1 | v2 (McKinsey aligned) |
+| Feature | v1 | v2 |
 |---|---|---|
-| Price variable | Flat rate | **IRR** (McKinsey uses Log IRR as β input) |
+| Price variable | Flat rate | **IRR** (log-log model uses Log IRR as β input) |
 | Demand model | Simple power law | **Log-log with β, γ_festival, γ_eid, γ_national** |
 | Prediction correction | None | **Power-law correction (α_adj, i) per cluster** |
 | Calibration | None | **Monthly factor: actual/predicted 14-week window per sector × salary** |
@@ -28,12 +28,12 @@ Opens at http://localhost:8501
 ```
 pricing_dashboard_v2/
 ├── app.py              ← Streamlit UI (6 tabs)
-├── engine.py           ← Full McKinsey pipeline
+├── engine.py           ← Full pricing pipeline
 ├── requirements.txt
 └── README.md
 ```
 
-## McKinsey pipeline in engine.py
+## Pricing pipeline in engine.py
 
 ```
 1. Log-log demand:  ln(Sales) = α + β·ln(IRR) + γ_f·Festival + γ_e·Eid + γ_n·National
