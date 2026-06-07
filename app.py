@@ -1,15 +1,25 @@
+"""
+app.py — McKinsey-aligned Pricing Optimisation Dashboard
+==========================================================
+Reflects the actual model structure from the McKinsey handover:
+  - IRR as the optimisation variable (not flat rate)
+  - Flat rate derived per cell from IRR + tenure + fee
+  - Log-log demand model with β, γ_festival, γ_eid, γ_national
+  - Power-law correction (α_adj, i) per cluster
+  - Monthly calibration factor (actual/predicted, 14-week window)
+  - Two objectives: max sales | IRR floor  OR  max IRR | sales floor
+"""
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-import matplotlib.patches as mpatches
-from matplotlib.ticker import FuncFormatter
 import io
 from engine import (
-    get_default_clusters, simulate_curve,
-    run_optimisation, net_revenue, projected_sales,
-    get_scenario_results,
+    CLUSTERS, CALIBRATION_FACTORS, SECTORS, SALARIES,
+    compute_irr, flat_rate_for_irr, forecast_demand,
+    get_cluster_cal_factor, run_optimisation, get_scenario_results,
 )
 
 # ── Page config ────────────────────────────────────────────────────────────────
@@ -23,680 +33,650 @@ st.set_page_config(
 # ── Custom CSS ─────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600;700&display=swap');
-
 html, body, [class*="css"] {
-    font-family: 'IBM Plex Sans', sans-serif;
-    background-color: #f5f7fa;
-    color: #1a1a2e;
+    font-family: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
 }
-
-/* Header */
 .main-header {
-    background: linear-gradient(135deg, #1565c0 0%, #1976d2 100%);
-    padding: 2rem 2.5rem;
-    border-radius: 12px;
-    margin-bottom: 1.5rem;
-    border-left: 5px solid #42a5f5;
-    box-shadow: 0 2px 8px rgba(21,101,192,0.15);
-}
-.main-header h1 {
-    color: #ffffff;
-    font-size: 1.8rem;
-    font-weight: 700;
-    margin: 0 0 0.3rem 0;
-    font-family: 'IBM Plex Sans', sans-serif;
-    letter-spacing: -0.5px;
-}
-.main-header p {
-    color: #bbdefb;
-    font-size: 0.9rem;
-    margin: 0;
-    font-family: 'IBM Plex Mono', monospace;
-}
-
-/* KPI cards */
-.kpi-card {
-    background: #ffffff;
-    border: 1px solid #dde3ea;
+    background: linear-gradient(135deg, #0a2540 0%, #1a4a6b 100%);
+    padding: 1.5rem 2rem;
     border-radius: 10px;
-    padding: 1.2rem 1.5rem;
-    text-align: center;
-    margin-bottom: 0.5rem;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+    margin-bottom: 1.2rem;
+    border-left: 4px solid #00b4d8;
 }
-.kpi-label {
-    color: #5c6f88;
-    font-size: 0.75rem;
-    font-family: 'IBM Plex Mono', monospace;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 0.4rem;
-}
-.kpi-value {
-    color: #1a1a2e;
-    font-size: 1.6rem;
-    font-weight: 700;
-    font-family: 'IBM Plex Sans', sans-serif;
-}
-.kpi-delta-pos { color: #2e7d32; font-size: 0.9rem; font-weight: 600; }
-.kpi-delta-neg { color: #c62828; font-size: 0.9rem; font-weight: 600; }
-.kpi-delta-neu { color: #5c6f88; font-size: 0.9rem; font-weight: 600; }
-
-/* Sidebar */
-section[data-testid="stSidebar"] {
-    background: #ffffff !important;
-    border-right: 1px solid #dde3ea;
-}
-section[data-testid="stSidebar"] * {
-    color: #1a1a2e !important;
-}
-
-/* Tab styling */
-.stTabs [data-baseweb="tab-list"] {
-    background: #e8edf3;
-    border-radius: 8px;
-    padding: 4px;
-}
-.stTabs [data-baseweb="tab"] {
-    color: #3d5a80;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.8rem;
-}
-.stTabs [aria-selected="true"] {
-    background: #1565c0 !important;
-    color: #ffffff !important;
-    border-radius: 6px;
-    font-weight: 700;
-}
-
-/* Dividers */
-hr { border-color: #dde3ea; }
-
-/* Download button */
-.stDownloadButton button {
-    background: #1565c0 !important;
-    color: #ffffff !important;
-    font-weight: 700 !important;
-    border: none !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-    width: 100%;
-}
-
-/* Segment badge */
-.seg-badge {
-    display: inline-block;
-    background: #e3ecf7;
-    color: #1565c0;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.7rem;
-    padding: 2px 8px;
-    border-radius: 4px;
-    margin: 2px;
-}
+.main-header h1 { color:#fff; font-size:1.6rem; font-weight:700; margin:0 0 0.2rem; }
+.main-header p  { color:#90caf9; font-size:0.82rem; margin:0; font-family:monospace; }
+.kpi-card { background:#0a2540; border:1px solid #1a4a6b; border-radius:10px;
+            padding:1rem 1.2rem; text-align:center; margin-bottom:0.4rem; }
+.kpi-label { color:#90caf9; font-size:0.72rem; font-family:monospace;
+             text-transform:uppercase; letter-spacing:1px; margin-bottom:0.3rem; }
+.kpi-value { color:#fff; font-size:1.5rem; font-weight:700; }
+.kpi-delta-pos { color:#4caf50; font-size:0.85rem; font-weight:600; }
+.kpi-delta-neg { color:#ef5350; font-size:0.85rem; font-weight:600; }
+.kpi-delta-neu { color:#90caf9; font-size:0.85rem; font-weight:600; }
+section[data-testid="stSidebar"] { background: #0a2540 !important; }
+section[data-testid="stSidebar"] * { color: #e0f0ff !important; }
+.stTabs [data-baseweb="tab-list"] { background:#0f2f4a; border-radius:8px; padding:3px; }
+.stTabs [data-baseweb="tab"] { color:#90caf9; font-family:monospace; font-size:0.78rem; }
+.stTabs [aria-selected="true"] { background:#00b4d8 !important; color:#0a2540 !important;
+                                   border-radius:5px; font-weight:700; }
+.stDownloadButton button { background:#00b4d8 !important; color:#0a2540 !important;
+                            font-weight:700 !important; border:none !important; width:100%; }
 </style>
 """, unsafe_allow_html=True)
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="main-header">
-    <h1>💰 Pricing Optimisation Dashboard</h1>
-    <p>Sales &amp; Net Revenue Based Pricing Strategy · Cluster-level price optimisation</p>
+  <h1>💰 Loan Pricing Optimisation Dashboard</h1>
+  <p>McKinsey methodology · Log-log demand · IRR optimisation · Power-law correction · Monthly calibration</p>
 </div>
 """, unsafe_allow_html=True)
 
 # ── Matplotlib theme ───────────────────────────────────────────────────────────
-plt.rcParams.update({
-    "figure.facecolor":  "#ffffff",
-    "axes.facecolor":    "#f5f7fa",
-    "axes.edgecolor":    "#c8d3de",
-    "axes.labelcolor":   "#2c3e50",
-    "axes.titlecolor":   "#1a1a2e",
-    "xtick.color":       "#2c3e50",
-    "ytick.color":       "#2c3e50",
-    "grid.color":        "#dde3ea",
-    "text.color":        "#1a1a2e",
-    "legend.facecolor":  "#ffffff",
-    "legend.edgecolor":  "#c8d3de",
-    "legend.labelcolor": "#2c3e50",
-    "axes.titlesize":    10,
-    "axes.labelsize":    9,
-    "font.family":       "monospace",
-})
+@st.cache_resource
+def _init_mpl():
+    plt.rcParams.update({
+        "figure.facecolor": "#0a2540", "axes.facecolor": "#0f2f4a",
+        "axes.edgecolor": "#1a4a6b",   "axes.labelcolor": "#90caf9",
+        "axes.titlecolor": "#ffffff",  "xtick.color": "#90caf9",
+        "ytick.color": "#90caf9",      "grid.color": "#1a4a6b",
+        "text.color": "#ffffff",       "legend.facecolor": "#0a2540",
+        "legend.edgecolor": "#1a4a6b", "legend.labelcolor": "#e0f0ff",
+        "axes.titlesize": 10,          "axes.labelsize": 9,
+        "font.family": "monospace",
+        "path.simplify": True,         "path.simplify_threshold": 0.5,
+    })
+_init_mpl()
 
-BLUE   = "#1565c0"
-RED    = "#c62828"
-GREEN  = "#2e7d32"
-AMBER  = "#e65100"
-GREY   = "#78909c"
+BLUE = "#00b4d8"; RED = "#ef5350"; GREEN = "#4caf50"
+AMBER = "#ffb74d"; GREY = "#546e7a"
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("### ⚙️ Settings")
+    st.markdown("### ⚙️ Optimisation Settings")
 
     objective = st.radio(
         "Business objective",
-        ["revenue", "volume"],
-        format_func=lambda x: "📈 Maximise Net Revenue"
-                               if x == "revenue" else "📦 Maximise Sales Volume",
+        ["max_sales_given_irr", "max_irr_given_sales"],
+        format_func=lambda x: (
+            "📈 Max Sales | IRR floor"
+            if x == "max_sales_given_irr"
+            else "📊 Max IRR | Sales floor"
+        ),
+    )
+
+    irr_target = st.slider(
+        "IRR floor / target (%)",
+        min_value=8.0, max_value=20.0, value=12.0, step=0.5,
+        help="Minimum IRR required per cluster (Objective 1) or target IRR (Objective 2)"
+    ) / 100
+
+    min_sales_retention = st.slider(
+        "Min sales retention (%)",
+        min_value=60, max_value=100, value=90, step=5,
+        help="Minimum % of current volume to maintain (Objective 2)"
+    ) / 100
+
+    max_irr_increase = st.slider(
+        "Max IRR increase (%)",
+        min_value=5, max_value=50, value=30, step=5,
+        help="How far above current IRR the optimizer can go"
+    ) / 100
+
+    st.markdown("---")
+    st.markdown("**📅 Calendar week type**")
+    st.caption("Affects demand forecast via γ coefficients")
+    is_festival = st.checkbox("Festival week (Ramadan / Hajj / National Day)", value=False)
+    is_eid      = st.checkbox("Eid holiday week", value=False)
+    is_national = st.checkbox("National Day week", value=False)
+
+    st.markdown("---")
+    st.markdown("**🔧 Model settings**")
+    apply_correction = st.checkbox(
+        "Apply power-law correction (α_adj, i)",
+        value=True,
+        help="Applies the per-cluster structural bias correction from the McKinsey slide"
+    )
+    apply_calibration = st.checkbox(
+        "Apply monthly calibration factor",
+        value=True,
+        help="Applies actual/predicted ratio from most recent 14 weeks per sector × salary"
     )
 
     st.markdown("---")
-    st.markdown("**Optimisation bounds**")
-
-    max_movement = st.slider(
-        "Max total price movement (SAR)",
-        100, 2000, 600, 50,
-        help="Total absolute SAR change across all clusters",
-    )
-    price_range_pct = st.slider(
-        "Price search range (±%)",
-        5, 50, 30, 5,
-        help="How far from current price the optimizer searches",
-    ) / 100
-
-    cost_adj = st.slider(
-        "Unit cost adjustment (%)",
-        -20, 20, 0, 1,
-        help="Simulate funding cost changes",
-    ) / 100
-
-    st.markdown("---")
-    st.markdown("**Min volume per cluster (units/week)**")
-
-    clusters_default = get_default_clusters()
-    min_volumes = {}
-    for _, row in clusters_default.iterrows():
-        mv = st.number_input(
-            f"C{row['id']}: {row['label'][:22]}",
-            min_value=0,
-            max_value=int(row["baseline_sales"]),
-            value=0, step=1,
-            key=f"mv_{row['id']}",
-        )
-        if mv > 0:
-            min_volumes[int(row["id"])] = mv
-
-    st.markdown("---")
-    st.caption("Built with scipy SLSQP · Power-law demand model")
+    st.caption("Built on McKinsey methodology · SLSQP solver · scipy")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# RUN OPTIMISATION (cached)
+# RUN OPTIMISATION
 # ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data
-def get_results(objective, max_movement, price_range_pct, cost_adj, mv_tuple):
-    mv = dict(mv_tuple)
+def cached_optimisation(objective, irr_target, min_sales_retention,
+                         max_irr_increase, is_festival, is_eid, is_national,
+                         apply_correction, apply_calibration):
+    cal_df = CALIBRATION_FACTORS if apply_calibration else None
     return run_optimisation(
-        get_default_clusters(),
-        objective=objective,
-        min_volumes=mv if mv else None,
-        max_movement=max_movement,
-        cost_adjustment=cost_adj,
-        price_range_pct=price_range_pct,
+        CLUSTERS, objective=objective,
+        irr_target=irr_target,
+        min_sales_retention=min_sales_retention,
+        max_irr_increase=max_irr_increase,
+        is_festival=int(is_festival), is_eid=int(is_eid),
+        is_national=int(is_national),
+        apply_correction=apply_correction,
+        cal_df=cal_df,
     )
 
-results = get_results(
-    objective, max_movement, price_range_pct, cost_adj,
-    tuple(sorted(min_volumes.items())),
+results = cached_optimisation(
+    objective, irr_target, min_sales_retention, max_irr_increase,
+    is_festival, is_eid, is_national, apply_correction, apply_calibration,
 )
 
-# ══════════════════════════════════════════════════════════════════════════════
-# KPI ROW
-# ══════════════════════════════════════════════════════════════════════════════
-cur_rev  = results["current_revenue"].sum()
-opt_rev  = results["optimal_revenue"].sum()
-cur_vol  = results["current_sales"].sum()
-opt_vol  = results["optimal_sales"].sum()
-rev_d    = (opt_rev - cur_rev) / cur_rev * 100
-vol_d    = (opt_vol - cur_vol) / cur_vol * 100
-uplift   = opt_rev - cur_rev
+# ── KPI Row ────────────────────────────────────────────────────────────────────
+cur_sales    = results["baseline_sales"].sum()
+opt_sales    = results["optimal_sales"].sum()
+sales_delta  = (opt_sales / cur_sales - 1) * 100
 
-def delta_html(val, prefix="", suffix="%"):
-    cls = "kpi-delta-pos" if val >= 0 else "kpi-delta-neg"
+cur_irr_wt   = (results["baseline_irr"]  * results["baseline_sales"]).sum() / cur_sales
+opt_irr_wt   = (results["optimal_irr"]   * results["optimal_sales"]).sum()  / opt_sales
+irr_delta_bps= (opt_irr_wt - cur_irr_wt) * 10000
+
+cur_fr       = results["baseline_flat_rate"].mean()
+opt_fr       = results["optimal_flat_rate"].mean()
+
+def delta_html(val, suffix="%", prefix=""):
+    cls  = "kpi-delta-pos" if val >= 0 else "kpi-delta-neg"
     sign = "▲" if val >= 0 else "▼"
     return f'<div class="{cls}">{sign} {prefix}{abs(val):.1f}{suffix}</div>'
 
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    st.markdown(f"""<div class="kpi-card">
-        <div class="kpi-label">Current Weekly Revenue</div>
-        <div class="kpi-value">SAR {cur_rev:,.0f}</div>
-        <div class="kpi-delta-neu">— baseline</div>
-    </div>""", unsafe_allow_html=True)
-with c2:
-    st.markdown(f"""<div class="kpi-card">
-        <div class="kpi-label">Optimal Weekly Revenue</div>
-        <div class="kpi-value">SAR {opt_rev:,.0f}</div>
-        {delta_html(rev_d)}
-    </div>""", unsafe_allow_html=True)
-with c3:
-    st.markdown(f"""<div class="kpi-card">
-        <div class="kpi-label">Weekly Revenue Uplift</div>
-        <div class="kpi-value">SAR {uplift:,.0f}</div>
-        {delta_html(rev_d)}
-    </div>""", unsafe_allow_html=True)
-with c4:
-    st.markdown(f"""<div class="kpi-card">
-        <div class="kpi-label">Volume Change</div>
-        <div class="kpi-value">{opt_vol:.0f} <span style="font-size:1rem;color:#90caf9">units</span></div>
-        {delta_html(vol_d)}
-    </div>""", unsafe_allow_html=True)
+c1, c2, c3, c4, c5 = st.columns(5)
+for col, label, value, delta, suffix in [
+    (c1, "Current weekly sales",   f"{cur_sales:.0f} units",  None,         None),
+    (c2, "Optimal weekly sales",   f"{opt_sales:.1f} units",  sales_delta,  "%"),
+    (c3, "Current wtd IRR",        f"{cur_irr_wt:.2%}",       None,         None),
+    (c4, "Optimal wtd IRR",        f"{opt_irr_wt:.2%}",       irr_delta_bps,"bps"),
+    (c5, "Avg flat rate change",   f"{opt_fr:.2%}",
+     (opt_fr - cur_fr)*10000, "bps"),
+]:
+    d_html = delta_html(delta, suffix) if delta is not None else \
+             '<div class="kpi-delta-neu">baseline</div>'
+    col.markdown(
+        f'<div class="kpi-card"><div class="kpi-label">{label}</div>'
+        f'<div class="kpi-value">{value}</div>{d_html}</div>',
+        unsafe_allow_html=True,
+    )
 
 st.markdown("<br>", unsafe_allow_html=True)
+if results["solver_status"].iloc[0] != "Optimization terminated successfully":
+    st.warning(f"⚠️ Solver: {results['solver_status'].iloc[0]}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════════════════════════════
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📋  Price Grid",
-    "📈  Demand Curves",
-    "🔀  Scenarios",
-    "⬇️  Export",
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📋 Price Grid",
+    "📈 Demand Curves",
+    "🔧 Model Components",
+    "📅 Calibration",
+    "🔀 Scenarios",
+    "⬇️ Export",
 ])
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TAB 1 — PRICE GRID
 # ─────────────────────────────────────────────────────────────────────────────
 with tab1:
-    st.markdown("#### Optimised Price Grid")
-    st.caption(f"Objective: **{objective.upper()}** · Max movement: SAR {max_movement} · "
-               f"Cost adj: {cost_adj*100:+.0f}%")
+    st.markdown("#### Optimised price grid")
+    week_type = ("🕌 Festival week" if is_festival else
+                 "🌙 Eid week"      if is_eid      else
+                 "🇸🇦 National Day"  if is_national else
+                 "📅 Normal week")
+    st.caption(f"Objective: **{objective.replace('_',' ')}** · "
+               f"IRR target: **{irr_target:.1%}** · "
+               f"Week type: **{week_type}** · "
+               f"Correction: **{'on' if apply_correction else 'off'}** · "
+               f"Calibration: **{'on' if apply_calibration else 'off'}**")
 
-    # ── Styled table ──────────────────────────────────────────────────────────
     display = results[[
-        "label", "beta", "current_price", "optimal_price",
-        "price_chg_pct", "current_sales", "optimal_sales",
-        "current_revenue", "optimal_revenue", "revenue_uplift",
+        "label","beta","baseline_irr","optimal_irr","irr_change_bps",
+        "baseline_flat_rate","optimal_flat_rate",
+        "baseline_sales","optimal_sales","sales_change_pct","cal_factor",
     ]].copy()
     display.columns = [
-        "Segment", "β", "Current (SAR)", "Optimal (SAR)",
-        "Δ Price %", "Cur Sales", "Opt Sales",
-        "Cur Revenue", "Opt Revenue", "Uplift (SAR)",
+        "Cluster","β","Cur IRR","Opt IRR","IRR Δ (bps)",
+        "Cur Flat Rate","Opt Flat Rate",
+        "Cur Sales","Opt Sales","Sales Δ %","Cal Factor",
     ]
 
     def style_delta(val):
-        if isinstance(val, (int, float)):
-            if val > 0:   return "color: #4caf50; font-weight: 600"
-            elif val < 0: return "color: #ef5350; font-weight: 600"
-        return ""
+        if not isinstance(val, (int, float)): return ""
+        return ("color:#4caf50;font-weight:600" if val > 0
+                else "color:#ef5350;font-weight:600" if val < 0 else "")
 
-    def style_beta(val):
-        if isinstance(val, float):
-            intensity = min(abs(val) / 2.5, 1.0)
-            r = int(227 - intensity * 80)
-            g = int(236 - intensity * 60)
-            b = int(247 - intensity * 30)
-            return f"background-color: rgb({r},{g},{b}); color: #1a1a2e"
-        return ""
-
-    styled = (
+    st.dataframe(
         display.style
         .format({
             "β":            "{:.2f}",
-            "Current (SAR)":"SAR {:.0f}",
-            "Optimal (SAR)":"SAR {:.0f}",
-            "Δ Price %":    "{:+.1f}%",
-            "Cur Sales":    "{:.1f}",
-            "Opt Sales":    "{:.1f}",
-            "Cur Revenue":  "SAR {:,.0f}",
-            "Opt Revenue":  "SAR {:,.0f}",
-            "Uplift (SAR)": "SAR {:+,.0f}",
+            "Cur IRR":      "{:.2%}",  "Opt IRR":       "{:.2%}",
+            "IRR Δ (bps)":  "{:+.0f}", "Cur Flat Rate": "{:.2%}",
+            "Opt Flat Rate":"{:.2%}",  "Cur Sales":     "{:.1f}",
+            "Opt Sales":    "{:.1f}",  "Sales Δ %":     "{:+.1f}%",
+            "Cal Factor":   "{:.3f}",
         })
-        .applymap(style_delta, subset=["Δ Price %", "Uplift (SAR)"])
-        .applymap(style_beta, subset=["β"])
-        .set_properties(**{
-            "font-family": "IBM Plex Mono, monospace",
-            "font-size": "12px",
-        })
+        .applymap(style_delta, subset=["IRR Δ (bps)","Sales Δ %"])
+        .set_properties(**{"font-family":"monospace","font-size":"12px"}),
+        use_container_width=True, height=320,
     )
 
-    st.dataframe(styled, use_container_width=True, height=320)
-
-    # ── Price comparison chart ────────────────────────────────────────────────
+    # Bar chart: IRR and flat rate comparison
     fig, axes = plt.subplots(1, 2, figsize=(14, 4))
-    fig.patch.set_facecolor("#ffffff")
-
-    x      = np.arange(len(results))
-    w      = 0.35
+    fig.patch.set_facecolor("#0a2540")
+    x = np.arange(len(results)); w = 0.35
     labels = [r[:16] for r in results["label"]]
 
-    # Prices
-    axes[0].bar(x - w/2, results["current_price"], w,
-                label="Current",  color=GREY,  alpha=0.9)
-    axes[0].bar(x + w/2, results["optimal_price"], w,
-                label="Optimal",  color=BLUE,  alpha=0.9)
+    axes[0].bar(x - w/2, results["baseline_irr"]*100, w,
+                label="Current IRR",  color=GREY,  alpha=0.85)
+    axes[0].bar(x + w/2, results["optimal_irr"]*100, w,
+                label="Optimal IRR",  color=BLUE,  alpha=0.85)
+    axes[0].axhline(irr_target*100, color=RED, linestyle="--",
+                    linewidth=1.2, label=f"IRR floor {irr_target:.1%}")
+    axes[0].set_xticks(x); axes[0].set_xticklabels(labels, rotation=35, ha="right", fontsize=7)
+    axes[0].set_ylabel("IRR (%)"); axes[0].set_title("Current vs Optimal IRR")
+    axes[0].legend(fontsize=8); axes[0].grid(axis="y", alpha=0.3)
 
-    # Add price labels on bars
-    for xi, (cp, op) in enumerate(zip(results["current_price"], results["optimal_price"])):
-        axes[0].text(xi - w/2, cp + 5, f"{cp:.0f}",
-                     ha="center", fontsize=6.5, color="#90caf9")
-        col = GREEN if op > cp else RED
-        axes[0].text(xi + w/2, op + 5, f"{op:.0f}",
-                     ha="center", fontsize=6.5, color=col)
-
-    axes[0].set_xticks(x)
-    axes[0].set_xticklabels(labels, rotation=35, ha="right", fontsize=7.5)
-    axes[0].set_ylabel("Price (SAR)")
-    axes[0].set_title("Current vs Optimal Price per Cluster")
-    axes[0].legend(fontsize=8)
-    axes[0].grid(axis="y", alpha=0.4)
-
-    # Revenue uplift waterfall
-    uplifts = results["revenue_uplift"].values
-    colors_u = [GREEN if u >= 0 else RED for u in uplifts]
-    bars = axes[1].bar(x, uplifts, color=colors_u, alpha=0.9, edgecolor="#0a2540")
-    axes[1].axhline(0, color="#90caf9", linewidth=0.8)
-    for xi, u in enumerate(uplifts):
-        axes[1].text(xi, u + (8 if u >= 0 else -18),
-                     f"SAR {u:+.0f}",
-                     ha="center", fontsize=6.5,
-                     color=GREEN if u >= 0 else RED)
-    axes[1].set_xticks(x)
-    axes[1].set_xticklabels(labels, rotation=35, ha="right", fontsize=7.5)
-    axes[1].set_ylabel("Weekly Revenue Uplift (SAR)")
-    axes[1].set_title("Revenue Uplift per Cluster")
-    axes[1].grid(axis="y", alpha=0.4)
+    axes[1].bar(x - w/2, results["baseline_flat_rate"]*100, w,
+                label="Current flat rate", color=GREY, alpha=0.85)
+    axes[1].bar(x + w/2, results["optimal_flat_rate"]*100, w,
+                label="Optimal flat rate", color=AMBER, alpha=0.85)
+    axes[1].set_xticks(x); axes[1].set_xticklabels(labels, rotation=35, ha="right", fontsize=7)
+    axes[1].set_ylabel("Flat Rate (%)"); axes[1].set_title("Flat Rate (derived from IRR)")
+    axes[1].legend(fontsize=8); axes[1].grid(axis="y", alpha=0.3)
 
     plt.tight_layout()
-    st.pyplot(fig)
-    plt.close()
+    st.pyplot(fig); plt.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TAB 2 — DEMAND CURVES
 # ─────────────────────────────────────────────────────────────────────────────
 with tab2:
-    st.markdown("#### Revenue & Sales Curves")
-    st.caption("Each curve sweeps price ±30% from current. "
-               "Dashed = revenue-max | Dotted = current | Dash-dot = optimal")
+    st.markdown("#### Demand curves — log-log model + correction + calibration")
+    st.caption("Shows how sales volume responds to IRR changes per cluster. "
+               "Blue = normal | Dashed = festival | Dotted = Eid")
 
     selected = st.multiselect(
-        "Clusters to display",
+        "Select clusters",
         options=list(results["label"]),
         default=list(results["label"][:4]),
     )
 
-    if not selected:
-        st.info("Select at least one cluster above.")
-    else:
+    if selected:
         n_sel = len(selected)
         fig   = plt.figure(figsize=(15, 4.5 * n_sel))
-        fig.patch.set_facecolor("#ffffff")
-        gs    = gridspec.GridSpec(n_sel, 2, figure=fig,
-                                  hspace=0.55, wspace=0.35)
+        fig.patch.set_facecolor("#0a2540")
+        gs_   = gridspec.GridSpec(n_sel, 2, figure=fig, hspace=0.55, wspace=0.35)
 
         for pi, seg_label in enumerate(selected):
-            row = results[results["label"] == seg_label].iloc[0]
-            sim = simulate_curve(row, price_range_pct=price_range_pct)
+            row   = results[results["label"] == seg_label].iloc[0]
+            cal_f = float(row["cal_factor"])
+            base_irr = float(row["baseline_irr"])
 
-            ax_s = fig.add_subplot(gs[pi, 0])
-            ax_r = fig.add_subplot(gs[pi, 1])
+            irr_grid = np.linspace(base_irr * 0.65, base_irr * 1.35, 150)
+            sales_normal   = [forecast_demand(row, irr, 0, 0, 0,
+                               apply_correction, cal_f) for irr in irr_grid]
+            sales_festival = [forecast_demand(row, irr, 1, 0, 0,
+                               apply_correction, cal_f) for irr in irr_grid]
+            sales_eid      = [forecast_demand(row, irr, 0, 1, 0,
+                               apply_correction, cal_f) for irr in irr_grid]
 
-            # Elasticity regime colour
-            beta = float(row["beta"])
-            if beta > -1:    regime_col = GREEN
-            elif beta > -1.5: regime_col = AMBER
-            else:             regime_col = RED
+            # Revenue proxy: sales × (IRR - CoF)
+            rev_normal = [s * max(irr - COF, 0)
+                          for s, irr in zip(sales_normal, irr_grid)]
+            from engine import COF as _COF
 
-            # Sales curve
-            ax_s.fill_between(sim["prices"], sim["sales"],
-                               alpha=0.15, color=BLUE)
-            ax_s.plot(sim["prices"], sim["sales"],
-                      color=BLUE, linewidth=2.5)
-            ax_s.axvline(float(row["current_price"]), color=GREY,
-                         linestyle=":", linewidth=1.5, label="Current")
-            ax_s.axvline(float(row["optimal_price"]), color=regime_col,
-                         linestyle="-.", linewidth=1.8, label="Optimal")
-            ax_s.set_xlabel("Price (SAR)"); ax_s.set_ylabel("Weekly Units")
-            ax_s.set_title(f"{seg_label}  ·  β = {beta:.2f}  ·  Sales Curve")
-            ax_s.legend(fontsize=8); ax_s.grid(alpha=0.3)
+            beta  = float(row["beta"])
+            color = (GREEN if beta > -1 else AMBER if beta > -1.5 else RED)
 
-            # Revenue curve
-            ax_r.fill_between(sim["prices"], sim["revenue"],
-                               alpha=0.15, color=regime_col)
-            ax_r.plot(sim["prices"], sim["revenue"],
-                      color=regime_col, linewidth=2.5)
-            ax_r.axvline(sim["rev_max_price"], color=AMBER,
-                         linestyle="--", linewidth=1.8,
-                         label=f"Rev-max SAR {sim['rev_max_price']:.0f}")
-            ax_r.axvline(float(row["current_price"]), color=GREY,
-                         linestyle=":", linewidth=1.5, label="Current")
-            ax_r.axvline(float(row["optimal_price"]), color=BLUE,
-                         linestyle="-.", linewidth=1.8, label="Optimal")
+            ax_s = fig.add_subplot(gs_[pi, 0])
+            ax_r = fig.add_subplot(gs_[pi, 1])
 
-            # Shade opportunity area
-            opt_p   = float(row["optimal_price"])
-            cur_p   = float(row["current_price"])
-            mask    = ((sim["prices"] >= min(opt_p, cur_p)) &
-                       (sim["prices"] <= max(opt_p, cur_p)))
-            ax_r.fill_between(sim["prices"][mask], sim["revenue"][mask],
-                               alpha=0.25, color=GREEN,
-                               label="Revenue opportunity")
+            ax_s.fill_between(irr_grid*100, sales_festival,
+                               alpha=0.12, color=color)
+            ax_s.plot(irr_grid*100, sales_normal,
+                      color=color, linewidth=2.5, label="Normal")
+            ax_s.plot(irr_grid*100, sales_festival,
+                      color=color, linewidth=1.2, linestyle="--",
+                      alpha=0.7, label="Festival")
+            ax_s.plot(irr_grid*100, sales_eid,
+                      color=color, linewidth=1.0, linestyle=":",
+                      alpha=0.6, label="Eid")
+            ax_s.axvline(base_irr*100, color=GREY, linestyle=":",
+                          linewidth=1.2, label="Current IRR")
+            ax_s.axvline(float(row["optimal_irr"])*100, color=color,
+                          linestyle="-.", linewidth=1.8, label="Optimal IRR")
+            ax_s.set_xlabel("IRR (%)"); ax_s.set_ylabel("Weekly Sales")
+            ax_s.set_title(f"{seg_label[:28]}\nβ={beta:.2f}  "
+                           f"γ_fest={row['gamma_festival']:.2f}  "
+                           f"α_adj={row['alpha_adj']:.2f}  cal={cal_f:.3f}",
+                           fontsize=8)
+            ax_s.legend(fontsize=7); ax_s.grid(alpha=0.25)
 
-            ax_r.set_xlabel("Price (SAR)"); ax_r.set_ylabel("Net Revenue (SAR)")
-            ax_r.set_title(f"{seg_label}  ·  Revenue Curve")
-            ax_r.legend(fontsize=7.5); ax_r.grid(alpha=0.3)
+            ax_r.fill_between(irr_grid*100, rev_normal,
+                               alpha=0.12, color=color)
+            ax_r.plot(irr_grid*100, rev_normal, color=color, linewidth=2.5)
+            ax_r.axvline(base_irr*100, color=GREY, linestyle=":", linewidth=1.2)
+            ax_r.axvline(float(row["optimal_irr"])*100, color=BLUE,
+                          linestyle="-.", linewidth=1.8, label="Optimal")
+            ax_r.set_xlabel("IRR (%)"); ax_r.set_ylabel("Revenue proxy")
+            ax_r.set_title("Revenue curve\n(sales × spread)")
+            ax_r.legend(fontsize=7); ax_r.grid(alpha=0.25)
 
-        plt.suptitle("Demand & Revenue Curves by Cluster",
-                     fontsize=13, fontweight="bold", color="white", y=1.01)
-        st.pyplot(fig)
-        plt.close()
+        plt.suptitle("Demand & Revenue Curves — full McKinsey pipeline",
+                     fontsize=12, fontweight="bold", color="white", y=1.01)
+        st.pyplot(fig); plt.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TAB 3 — SCENARIOS
+# TAB 3 — MODEL COMPONENTS
 # ─────────────────────────────────────────────────────────────────────────────
 with tab3:
-    st.markdown("#### Scenario Comparison")
-    st.caption("Best / Base / Downside / Worst — all inputs shift simultaneously")
+    st.markdown("#### Model components per cluster")
+    st.caption("Shows every parameter from the McKinsey slide: "
+               "β, γ coefficients, power-law correction (α_adj, i), baseline")
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        st.markdown("**Log-log regression coefficients**")
+        coef_df = CLUSTERS[[
+            "label","beta",
+            "gamma_festival","gamma_eid","gamma_national"
+        ]].copy()
+        coef_df.columns = ["Cluster","β (IRR)","γ Festival","γ Eid","γ National"]
+        st.dataframe(
+            coef_df.style.format({
+                "β (IRR)":    "{:.2f}",
+                "γ Festival": "{:+.2f}",
+                "γ Eid":      "{:+.2f}",
+                "γ National": "{:+.2f}",
+            }).applymap(
+                lambda v: "color:#ef5350" if isinstance(v,float) and v < 0
+                          else "color:#4caf50" if isinstance(v,float) and v > 0
+                          else "",
+                subset=["β (IRR)","γ Festival","γ Eid","γ National"]
+            ).set_properties(**{"font-size":"12px","font-family":"monospace"}),
+            use_container_width=True,
+        )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("**γ interpretation** (multiplicative lift)")
+        for _, r in CLUSTERS.iterrows():
+            gf = np.exp(r["gamma_festival"])
+            ge = np.exp(r["gamma_eid"])
+            st.markdown(
+                f"  `{r['label'][:20]}`  "
+                f"Festival: **×{gf:.2f}**  |  "
+                f"Eid: **×{ge:.2f}**",
+                unsafe_allow_html=False,
+            )
+
+    with col_b:
+        st.markdown("**Power-law correction parameters**")
+        corr_df = CLUSTERS[["label","alpha_adj","corr_i"]].copy()
+        corr_df["e^i (level multiplier)"] = np.exp(corr_df["corr_i"])
+        corr_df["effect"] = corr_df["alpha_adj"].apply(
+            lambda a: "Amplify range ↑" if a > 1.02 else
+                      "Compress range ↓" if a < 0.98 else "No range change"
+        )
+        corr_df.columns = ["Cluster","α_adj","i","e^i","Effect"]
+        st.dataframe(
+            corr_df.style.format({
+                "α_adj": "{:.2f}", "i": "{:+.2f}", "e^i": "{:.3f}"
+            }).applymap(
+                lambda v: "color:#ffb74d" if isinstance(v,float) and abs(v-1)>0.03
+                          else "",
+                subset=["α_adj"]
+            ).set_properties(**{"font-size":"12px","font-family":"monospace"}),
+            use_container_width=True,
+        )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("**IRR → Flat rate conversion**")
+        st.caption("Same IRR, different flat rate by tenure")
+        rows_irr = []
+        for _, r in CLUSTERS.iterrows():
+            for tenure in [24, 36, 48, 60]:
+                fr = flat_rate_for_irr(float(r["baseline_irr"]), tenure,
+                                       float(r["fee_pct"]))
+                rows_irr.append({
+                    "Cluster":  r["label"][:18],
+                    "Tenure":   f"{tenure}m",
+                    "IRR":      f"{r['baseline_irr']:.2%}",
+                    "Flat Rate":f"{fr:.2%}" if fr else "N/A",
+                })
+        irr_df = pd.DataFrame(rows_irr)
+        st.dataframe(
+            irr_df.pivot(index="Cluster", columns="Tenure", values="Flat Rate"),
+            use_container_width=True,
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 4 — CALIBRATION FACTORS
+# ─────────────────────────────────────────────────────────────────────────────
+with tab4:
+    st.markdown("#### Monthly calibration factors")
+    st.caption("Actual / Predicted ratio over most recent 14 weeks · "
+               "Per economic sector × salary bucket · "
+               "Refreshed monthly")
+
+    col_c, col_d = st.columns([3, 2])
+
+    with col_c:
+        # Heatmap pivot
+        pivot = CALIBRATION_FACTORS.pivot(
+            index="sector", columns="salary", values="cal_factor"
+        ).reindex(columns=["<5k","5-10k","10-20k","20-40k","40k+"])
+
+        fig, ax = plt.subplots(figsize=(8, 4))
+        fig.patch.set_facecolor("#0a2540")
+        im = ax.imshow(pivot.values, cmap="RdYlGn", vmin=0.80, vmax=1.20,
+                       aspect="auto")
+        plt.colorbar(im, ax=ax, label="Calibration factor")
+        ax.set_xticks(range(len(pivot.columns)))
+        ax.set_xticklabels(pivot.columns, fontsize=9)
+        ax.set_yticks(range(len(pivot.index)))
+        ax.set_yticklabels(pivot.index, fontsize=9)
+        ax.set_title("Calibration factor heatmap\n"
+                     "Green > 1 = model under-predicting · "
+                     "Red < 1 = over-predicting", fontsize=9)
+        for i in range(len(pivot.index)):
+            for j in range(len(pivot.columns)):
+                val = pivot.values[i, j]
+                ax.text(j, i, f"{val:.2f}", ha="center", va="center",
+                        fontsize=8,
+                        color="white" if abs(val - 1) > 0.10 else "#cccccc")
+        plt.tight_layout()
+        st.pyplot(fig); plt.close()
+
+    with col_d:
+        st.markdown("**Factor table**")
+        st.dataframe(
+            CALIBRATION_FACTORS[["sector","salary","cal_factor",
+                                  "n_weeks","reliable","last_updated"]]
+            .style.format({"cal_factor": "{:.4f}"})
+            .applymap(
+                lambda v: ("color:#4caf50" if isinstance(v,float) and v > 1.05
+                           else "color:#ef5350" if isinstance(v,float) and v < 0.95
+                           else ""),
+                subset=["cal_factor"]
+            ).set_properties(**{"font-size":"11px","font-family":"monospace"}),
+            use_container_width=True, height=400,
+        )
+
+    st.markdown("---")
+    st.markdown("**How calibration factor affects the forecast**")
+    st.caption("Shows raw vs calibrated forecast for a selected cluster and IRR")
+
+    demo_cluster = st.selectbox("Demo cluster",
+                                 options=list(CLUSTERS["label"]), index=0)
+    demo_irr = st.slider("Demo IRR", 0.08, 0.25,
+                          float(CLUSTERS[CLUSTERS.label==demo_cluster]["baseline_irr"].values[0]),
+                          0.005, format="%.3f")
+
+    row_demo = CLUSTERS[CLUSTERS.label == demo_cluster].iloc[0]
+    cal_f_demo = float(results[results.label==demo_cluster]["cal_factor"].values[0])
+    raw_sales  = forecast_demand(row_demo, demo_irr, int(is_festival),
+                                  int(is_eid), int(is_national),
+                                  apply_correction, 1.0)
+    cal_sales  = forecast_demand(row_demo, demo_irr, int(is_festival),
+                                  int(is_eid), int(is_national),
+                                  apply_correction, cal_f_demo)
+
+    c1d, c2d, c3d = st.columns(3)
+    c1d.metric("Raw forecast",        f"{raw_sales:.1f} units/wk")
+    c2d.metric("Calibration factor",  f"{cal_f_demo:.4f}",
+               f"{(cal_f_demo-1)*100:+.1f}%")
+    c3d.metric("Calibrated forecast", f"{cal_sales:.1f} units/wk",
+               f"{cal_sales-raw_sales:+.1f}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 5 — SCENARIOS
+# ─────────────────────────────────────────────────────────────────────────────
+with tab5:
+    st.markdown("#### Scenario comparison")
+    st.caption("Best / Base / Downside / Worst — β and baseline sales shift simultaneously")
 
     @st.cache_data
-    def cached_scenarios(objective, max_movement, price_range_pct):
-        return get_scenario_results(objective, max_movement, price_range_pct)
+    def cached_scenarios(irr_target, min_sales_retention, is_festival,
+                          is_eid, is_national, apply_correction, apply_calibration):
+        cal_df = CALIBRATION_FACTORS if apply_calibration else None
+        return get_scenario_results(
+            irr_target, min_sales_retention,
+            int(is_festival), int(is_eid), int(is_national),
+            apply_correction, cal_df,
+        )
 
-    scen_df = cached_scenarios(objective, max_movement, price_range_pct)
+    scen_df = cached_scenarios(
+        irr_target, min_sales_retention, is_festival, is_eid,
+        is_national, apply_correction, apply_calibration,
+    )
+    base_sales = scen_df[scen_df["Scenario"]=="⚪ Base case"]["Total Sales"].values[0]
 
-    # Table
     st.dataframe(
-        scen_df.style
-        .format({
-            "Total Revenue": "SAR {:,.0f}",
-            "Total Sales":   "{:.1f} units",
-            "Avg Opt Price": "SAR {:.0f}",
-            "vs Base (%)":   "{:+.1f}%",
-        })
-        .applymap(
-            lambda v: ("color:#4caf50;font-weight:600" if isinstance(v, float) and v > 0
-                       else "color:#ef5350;font-weight:600" if isinstance(v, float) and v < 0
+        scen_df.style.format({
+            "Total Sales": "{:.1f} units",
+            "Avg IRR":     "{:.2%}",
+            "Avg Flat Rate":"{:.2%}",
+            "vs Base (%)": "{:+.1f}%",
+        }).applymap(
+            lambda v: ("color:#4caf50;font-weight:600" if isinstance(v,float) and v > 0
+                       else "color:#ef5350;font-weight:600" if isinstance(v,float) and v < 0
                        else ""),
             subset=["vs Base (%)"]
-        )
-        .set_properties(**{"font-family": "IBM Plex Mono, monospace", "font-size": "12px"}),
+        ).set_properties(**{"font-family":"monospace","font-size":"12px"}),
         use_container_width=True,
     )
 
-    # Charts
-    fig, axes = plt.subplots(1, 2, figsize=(14, 4.5))
-    fig.patch.set_facecolor("#ffffff")
-
-    scen_colors = [GREEN, BLUE, AMBER, RED]
-    base_rev    = scen_df[scen_df["Scenario"] == "⚪ Base case"]["Total Revenue"].values[0]
-
-    # Revenue bar chart
-    bars = axes[0].bar(
-        range(len(scen_df)),
-        scen_df["Total Revenue"],
-        color=scen_colors, alpha=0.9, edgecolor="#0a2540", width=0.6,
-    )
-    axes[0].axhline(base_rev, color=GREY, linestyle="--",
-                    linewidth=1.5, label="Base revenue")
+    fig, ax = plt.subplots(figsize=(9, 4))
+    fig.patch.set_facecolor("#0a2540")
+    colors_s = [GREEN, BLUE, AMBER, RED]
+    bars = ax.bar(scen_df["Scenario"], scen_df["Total Sales"],
+                  color=colors_s, alpha=0.85, edgecolor="#0a2540")
+    ax.axhline(base_sales, color=GREY, linestyle="--",
+               linewidth=1.5, label="Base")
     for bar, (_, row) in zip(bars, scen_df.iterrows()):
-        axes[0].text(
-            bar.get_x() + bar.get_width()/2,
-            bar.get_height() + 30,
-            f"{row['vs Base (%)']:+.1f}%",
-            ha="center", fontsize=10, fontweight="bold",
-            color=GREEN if row["vs Base (%)"] >= 0 else RED,
-        )
-    axes[0].set_xticks(range(len(scen_df)))
-    axes[0].set_xticklabels(
-        [s.split()[-1] for s in scen_df["Scenario"]],
-        fontsize=9,
-    )
-    axes[0].set_ylabel("Total Weekly Net Revenue (SAR)")
-    axes[0].set_title("Revenue by Scenario")
-    axes[0].legend(fontsize=8); axes[0].grid(axis="y", alpha=0.4)
-
-    # Revenue vs volume scatter
-    axes[1].scatter(
-        scen_df["Total Sales"],
-        scen_df["Total Revenue"],
-        c=scen_colors, s=180, zorder=5, edgecolors="#0a2540", linewidths=1.5,
-    )
-    for _, row in scen_df.iterrows():
-        axes[1].annotate(
-            row["Scenario"].split()[-1],
-            (row["Total Sales"], row["Total Revenue"]),
-            textcoords="offset points", xytext=(8, 4),
-            fontsize=8, color="#e0f0ff",
-        )
-    # Connect the dots
-    axes[1].plot(scen_df["Total Sales"], scen_df["Total Revenue"],
-                 color=GREY, linewidth=1, linestyle="--", alpha=0.5)
-    axes[1].set_xlabel("Total Weekly Sales (units)")
-    axes[1].set_ylabel("Total Weekly Net Revenue (SAR)")
-    axes[1].set_title("Revenue–Volume Frontier by Scenario")
-    axes[1].grid(alpha=0.3)
-
+        ax.text(bar.get_x() + bar.get_width()/2,
+                bar.get_height() + 0.3,
+                f"{row['vs Base (%)']:+.1f}%",
+                ha="center", fontsize=10, fontweight="bold",
+                color=GREEN if row["vs Base (%)"] >= 0 else RED)
+    ax.set_ylabel("Total weekly sales (units)")
+    ax.set_title("Sales volume by scenario")
+    ax.legend(fontsize=8); ax.grid(axis="y", alpha=0.3)
     plt.tight_layout()
-    st.pyplot(fig)
-    plt.close()
+    st.pyplot(fig); plt.close()
 
     # Robustness check
-    st.markdown("#### Robustness Check")
-    worst_rev = scen_df[scen_df["Scenario"] == "🔴 Worst case"]["Total Revenue"].values[0]
-    cur_rev_check = results["current_revenue"].sum()
-
-    if worst_rev > cur_rev_check:
-        st.success(f"✅ **Robust** — even in the worst case, optimal revenue "
-                   f"(SAR {worst_rev:,.0f}) exceeds current revenue "
-                   f"(SAR {cur_rev_check:,.0f}). Proceed with confidence.")
+    worst = scen_df[scen_df["Scenario"]=="🔴 Worst case"]["Total Sales"].values[0]
+    cur   = results["baseline_sales"].sum()
+    if worst > cur * 0.80:
+        st.success(f"✅ Robust — worst case still delivers "
+                   f"{worst:.0f} units/week ({worst/cur:.0%} of current)")
     else:
-        st.warning(f"⚠️ **Fragile** — in the worst case, optimal revenue "
-                   f"(SAR {worst_rev:,.0f}) falls below current "
-                   f"(SAR {cur_rev_check:,.0f}). Run A/B test before full rollout.")
+        st.warning(f"⚠️ Fragile — worst case drops to {worst:.0f} units/week "
+                   f"({worst/cur:.0%} of current). Consider A/B test before full rollout.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TAB 4 — EXPORT
+# TAB 6 — EXPORT
 # ─────────────────────────────────────────────────────────────────────────────
-with tab4:
-    st.markdown("#### Export Results")
+with tab6:
+    st.markdown("#### Export results")
 
-    # ── Build export dataframe ────────────────────────────────────────────────
     export = results[[
-        "label", "beta",
-        "current_price", "optimal_price", "price_chg_pct",
-        "current_sales", "optimal_sales",
-        "current_revenue", "optimal_revenue", "revenue_uplift",
+        "label","beta","gamma_festival","gamma_eid",
+        "alpha_adj","corr_i",
+        "baseline_irr","optimal_irr","irr_change_bps",
+        "baseline_flat_rate","optimal_flat_rate",
+        "baseline_sales","optimal_sales","sales_change_pct",
+        "cal_factor","tenure","fee_pct",
     ]].copy()
     export.columns = [
-        "Segment", "Elasticity (β)",
-        "Current Price (SAR)", "Optimal Price (SAR)", "Price Change (%)",
-        "Current Weekly Sales", "Optimal Weekly Sales",
-        "Current Weekly Revenue (SAR)", "Optimal Weekly Revenue (SAR)",
-        "Revenue Uplift (SAR)",
+        "Cluster","β","γ Festival","γ Eid",
+        "α_adj (correction)","i (correction)",
+        "Baseline IRR","Optimal IRR","IRR Δ (bps)",
+        "Baseline Flat Rate","Optimal Flat Rate",
+        "Baseline Sales/wk","Optimal Sales/wk","Sales Δ %",
+        "Calibration Factor","Tenure (months)","Fee %",
     ]
-    export["Objective"]          = objective.capitalize()
-    export["Max Movement (SAR)"] = max_movement
-    export["Cost Adj (%)"]       = cost_adj * 100
-    export["Price Range (±%)"]   = price_range_pct * 100
+    export["Objective"]   = objective
+    export["IRR Target"]  = irr_target
+    export["Week Type"]   = ("Festival" if is_festival else
+                              "Eid"      if is_eid      else
+                              "Normal")
+    export["Correction Applied"]   = apply_correction
+    export["Calibration Applied"]  = apply_calibration
 
-    # ── Summary row ───────────────────────────────────────────────────────────
-    summary_row = pd.DataFrame([{
-        "Segment": "── TOTAL ──",
-        "Elasticity (β)": "",
-        "Current Price (SAR)": "",
-        "Optimal Price (SAR)": "",
-        "Price Change (%)": "",
-        "Current Weekly Sales":          export["Current Weekly Sales"].sum(),
-        "Optimal Weekly Sales":          export["Optimal Weekly Sales"].sum(),
-        "Current Weekly Revenue (SAR)":  export["Current Weekly Revenue (SAR)"].sum(),
-        "Optimal Weekly Revenue (SAR)":  export["Optimal Weekly Revenue (SAR)"].sum(),
-        "Revenue Uplift (SAR)":          export["Revenue Uplift (SAR)"].sum(),
-        "Objective": "",
-        "Max Movement (SAR)": "",
-        "Cost Adj (%)": "",
-        "Price Range (±%)": "",
-    }])
-    export_full = pd.concat([export, summary_row], ignore_index=True)
+    csv_bytes = export.to_csv(index=False).encode("utf-8")
 
-    # ── CSV ───────────────────────────────────────────────────────────────────
-    csv_bytes = export_full.to_csv(index=False).encode("utf-8")
-
-    col_dl1, col_dl2 = st.columns(2)
-    with col_dl1:
-        st.download_button(
-            label="⬇️  Download Price Grid (CSV)",
-            data=csv_bytes,
-            file_name=f"optimal_price_grid_{objective}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    # ── Excel ─────────────────────────────────────────────────────────────────
     excel_buf = io.BytesIO()
     with pd.ExcelWriter(excel_buf, engine="openpyxl") as writer:
-        export_full.to_excel(writer, sheet_name="Price Grid", index=False)
-        scen_df_exp = cached_scenarios(objective, max_movement, price_range_pct)
-        scen_df_exp.to_excel(writer, sheet_name="Scenarios", index=False)
+        export.to_excel(writer, sheet_name="Price Grid", index=False)
+        CLUSTERS.to_excel(writer, sheet_name="Model Params", index=False)
+        CALIBRATION_FACTORS.to_excel(writer, sheet_name="Calibration", index=False)
+        scen_df.to_excel(writer, sheet_name="Scenarios", index=False)
     excel_buf.seek(0)
 
-    with col_dl2:
-        st.download_button(
-            label="⬇️  Download Full Report (Excel)",
-            data=excel_buf,
-            file_name=f"pricing_report_{objective}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+    c1e, c2e = st.columns(2)
+    with c1e:
+        st.download_button("⬇️ Download CSV",
+                            data=csv_bytes,
+                            file_name=f"optimal_prices_{objective}.csv",
+                            mime="text/csv",
+                            use_container_width=True)
+    with c2e:
+        st.download_button("⬇️ Download Excel (all sheets)",
+                            data=excel_buf,
+                            file_name=f"pricing_report_{objective}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True)
 
     st.markdown("---")
     st.markdown("**Preview**")
-    def safe_sar_fmt(val):
-        try:
-            return f"SAR {float(val):,.0f}"
-        except (ValueError, TypeError):
-            return val if val is not None else ""
 
-    sar_cols = {c: safe_sar_fmt for c in export_full.columns if "SAR" in c}
+    def safe_fmt(val):
+        try:    return f"{float(val):,.4f}"
+        except: return str(val) if val is not None else ""
 
+    sar_cols = {c: safe_fmt for c in export.columns
+                if any(x in c for x in ["IRR","Rate","β","γ","α","Factor"])}
     st.dataframe(
-        export_full.style.format(
-            sar_cols,
-            na_rep="",
-        ).set_properties(**{
-            "font-family": "IBM Plex Mono, monospace",
-            "font-size": "11px",
-        }),
-        use_container_width=True,
-        height=360,
+        export.style.format(sar_cols, na_rep="")
+        .set_properties(**{"font-family":"monospace","font-size":"11px"}),
+        use_container_width=True, height=350,
     )
-
-    st.markdown("---")
-    st.markdown("#### Settings used in this run")
-    settings_md = f"""
-| Setting | Value |
-|---|---|
-| Objective | {objective.capitalize()} |
-| Max price movement | SAR {max_movement} |
-| Price search range | ±{price_range_pct*100:.0f}% |
-| Unit cost adjustment | {cost_adj*100:+.0f}% |
-| Min volume constraints | {min_volumes if min_volumes else 'None'} |
-| Solver | SLSQP (scipy) |
-| Demand model | Power-law: Sales = Baseline × (P_new/P_cur)^β |
-"""
-    st.markdown(settings_md)
