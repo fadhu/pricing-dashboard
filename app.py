@@ -18,6 +18,7 @@ import matplotlib.gridspec as gridspec
 import io
 from engine import (
     CLUSTERS, CALIBRATION_FACTORS, SECTORS, SALARIES,
+    COF,
     compute_irr, flat_rate_for_irr, forecast_demand,
     get_cluster_cal_factor, run_optimisation, get_scenario_results,
 )
@@ -335,8 +336,6 @@ with tab2:
             # Revenue proxy: sales × (IRR - CoF)
             rev_normal = [s * max(irr - COF, 0)
                           for s, irr in zip(sales_normal, irr_grid)]
-            from engine import COF as _COF
-
             beta  = float(row["beta"])
             color = (GREEN if beta > -1 else AMBER if beta > -1.5 else RED)
 
