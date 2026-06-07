@@ -206,14 +206,27 @@ def run_optimisation(clusters_df, objective="max_sales_given_irr",
     cal_factors = [get_cluster_cal_factor(i, cal_df)
                    for i in clusters_df["id"]]
 
-    # Bounds on IRR (not flat rate)
-    # Floor: irr_target (no point going below if it's the constraint)
-    # Cap:   current IRR × (1 + max_irr_increase)
-    irr_floors = np.full(N, irr_target * 0.85)   # allow slight dip for volume
-    irr_caps   = clusters_df["baseline_irr"].values * (1 + max_irr_increase)
-    bounds     = Bounds(lb=irr_floors, ub=irr_caps)
+    baseline_irrs = clusters_df["baseline_irr"].values.astype(float)
+    irr_caps      = baseline_irrs * (1 + max_irr_increase)
 
-    x0 = clusters_df["baseline_irr"].values.astype(float)
+    # ── Feasibility guard ──────────────────────────────────────────────────────
+    # For Objective 1: irr_target must be <= each cluster's cap
+    # If irr_target exceeds some caps, clamp it per-cluster so
+    # the feasible region is never empty
+    if objective == "max_sales_given_irr":
+        # Per-cluster effective floor: cannot exceed the cap
+        effective_floors = np.minimum(
+            np.full(N, irr_target),
+            irr_caps * 0.999   # stay just inside the cap
+        )
+    else:
+        # For Objective 2: allow optimizer to go down to 85% of baseline
+        effective_floors = baseline_irrs * 0.85
+
+    # x0: start at baseline, but clamp into [floor, cap]
+    x0 = np.clip(baseline_irrs, effective_floors, irr_caps)
+
+    bounds = Bounds(lb=effective_floors, ub=irr_caps)
 
     def get_sales(irr_vec, i):
         row = clusters_df.iloc[i]
@@ -225,7 +238,7 @@ def run_optimisation(clusters_df, objective="max_sales_given_irr",
         for i, row in clusters_df.iterrows():
             iloc_i = clusters_df.index.get_loc(i)
             sales  = get_sales(irr_vec, iloc_i)
-            w      = sales * row["tenure"]   # weight by loan-months
+            w      = sales * row["tenure"]
             total_wv += irr_vec[iloc_i] * w
             total_w  += w
         return total_wv / total_w if total_w > 0 else 0.0
@@ -235,29 +248,35 @@ def run_optimisation(clusters_df, objective="max_sales_given_irr",
         def obj(irr_vec):
             return -sum(get_sales(irr_vec, i) for i in range(N))
 
+        # No explicit inequality constraints needed —
+        # the IRR floor is enforced via the Bounds lower limit.
+        # Adding a redundant inequality constraint alongside bounds
+        # causes the "incompatible constraints" error when irr_target
+        # is close to or above the cap for any cluster.
         constraints = []
-        # IRR floor per cluster
-        for i, row in clusters_df.iterrows():
-            iloc_i = clusters_df.index.get_loc(i)
-            constraints.append({
-                "type": "ineq",
-                "fun":  (lambda v, ii=iloc_i: v[ii] - irr_target)
-            })
 
     # ── Objective 2: Maximise IRR given sales floor ────────────────────────────
+    # Uses a penalty approach: maximise IRR but add a large penalty
+    # whenever projected sales falls below the retention threshold.
+    # This avoids the gradient conflict between the IRR maximisation
+    # direction (raise rates) and the sales floor (lower rates).
     else:
-        def obj(irr_vec):
-            return -get_portfolio_irr(irr_vec)
+        min_sales_vec = (clusters_df["baseline_sales"].values.astype(float)
+                         * min_sales_retention)
+        PENALTY = 1e4   # large enough to dominate, small enough for numerics
 
+        def obj(irr_vec):
+            portfolio_irr = get_portfolio_irr(irr_vec)
+            # Penalty for each cluster below its sales floor
+            penalty = 0.0
+            for i in range(N):
+                sales_i   = get_sales(irr_vec, i)
+                shortfall = max(0.0, min_sales_vec[i] - sales_i)
+                penalty  += PENALTY * shortfall
+            return -portfolio_irr + penalty
+
+        # No explicit inequality constraints — handled via penalty
         constraints = []
-        for i, row in clusters_df.iterrows():
-            iloc_i   = clusters_df.index.get_loc(i)
-            min_sales = float(row["baseline_sales"]) * min_sales_retention
-            constraints.append({
-                "type": "ineq",
-                "fun":  (lambda v, ii=iloc_i, r=row, ms=min_sales:
-                         get_sales(v, ii) - ms)
-            })
 
     result = minimize(obj, x0, method="SLSQP", bounds=bounds,
                       constraints=constraints,
